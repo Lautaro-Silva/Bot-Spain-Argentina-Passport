@@ -2,10 +2,31 @@ import requests
 from bs4 import BeautifulSoup
 import json
 
-# URL de la página y configuración de Telegram
-URL = "https://www.cgeonline.com.ar/informacion/apertura-de-citas.html"
-TELEGRAM_TOKEN = "7815426031:AAHyH7NA4THnEo3AKoT_llR9Bjf9ZlNd6ic"
-CHAT_ID = "1773852782"
+# Archivo de configuración con las credenciales
+CONFIG_FILE = "config.json"
+
+# Función para cargar la configuración desde el archivo JSON
+def cargar_configuracion():
+    try:
+        with open(CONFIG_FILE, "r") as archivo_config:
+            config = json.load(archivo_config)
+            return config
+    except FileNotFoundError:
+        print(f"Error: El archivo {CONFIG_FILE} no se encuentra.")
+        return None
+    except json.JSONDecodeError:
+        print("Error: El archivo de configuración no tiene un formato válido.")
+        return None
+
+# Cargar configuración
+config = cargar_configuracion()
+if config is None:
+    raise Exception("No se pudo cargar la configuración. Abortando ejecución.")
+
+# Acceder a las variables de configuración
+URL = config["URL"]
+TELEGRAM_TOKEN = config["TELEGRAM_TOKEN"]
+CHAT_ID = config["CHAT_ID"]
 
 # Archivo para guardar las fechas anteriores
 DATA_FILE = "datos_pagina.json"
