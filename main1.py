@@ -3,97 +3,62 @@ from bs4 import BeautifulSoup
 import json
 import time
 from datetime import datetime
+import os
 
 # Archivo de configuración con las credenciales
 CONFIG_FILE = "config.json"
-
-# Función para cargar la configuración desde el archivo JSON
-def cargar_configuracion():
-    try:
-        with open(CONFIG_FILE, "r") as archivo_config:
-            config = json.load(archivo_config)
-            return config
-    except FileNotFoundError:
-        print(f"Error: El archivo {CONFIG_FILE} no se encuentra.")
-        return None
-    except json.JSONDecodeError:
-        print("Error: El archivo de configuración no tiene un formato válido.")
-        return None
-
-# Cargar configuración
-config = cargar_configuracion()
-if config is None:
-    raise Exception("No se pudo cargar la configuración. Abortando ejecución.")
-
-# Acceder a las variables de configuración
-URL = config["URL"]
-TELEGRAM_TOKEN = config["TELEGRAM_TOKEN"]
-CHAT_ID = config["CHAT_ID"]
-
-# Archivo para guardar las fechas anteriores y la última notificación
 DATA_FILE = "datos_pagina.json"
 
+def cargar_configuracion(config_file):
+    try:
+        with open(config_file, "r") as archivo_config:
+            return json.load(archivo_config)
+    except FileNotFoundError:
+        print(f"Error: El archivo {config_file} no se encuentra.")
+    except json.JSONDecodeError:
+        print("Error: El archivo de configuración no tiene un formato válido.")
+    return None
 
-def enviar_mensaje_telegram(mensaje):
-    """Envia un mensaje a través de Telegram."""
-    url_telegram = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    params = {"chat_id": CHAT_ID, "text": mensaje}
+def enviar_mensaje_telegram(token, chat_id, mensaje):
+    """Envía un mensaje a través de Telegram."""
+    url_telegram = f"https://api.telegram.org/bot{token}/sendMessage"
+    params = {"chat_id": chat_id, "text": mensaje}
     try:
         requests.post(url_telegram, data=params)
-    except Exception as e:
+    except requests.RequestException as e:
         print(f"Error al enviar mensaje por Telegram: {e}")
 
+def obtener_fila_pasaportes(tabla):
+    for fila in tabla.find_all("tr"):
+        columnas = fila.find_all("td")
+        if columnas and "Pasaportes" in columnas[0].get_text(strip=True) and "renovación y primera vez" in columnas[0].get_text(strip=True):
+            return fila
+    return None
 
-def obtener_fechas_pasaportes():
+def obtener_fechas_pasaportes(url):
     try:
-        # Make the HTTP request
-        response = requests.get(URL)
-        response.raise_for_status()  # Raise an exception for HTTP errors
+        response = requests.get(url)
+        response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
-
-        # Find the table inside the 'table-responsive-sm' div
         tabla = soup.find("div", class_="table-responsive-sm").find("table")
         if not tabla:
             raise ValueError("No se encontró la tabla dentro de 'table-responsive-sm'.")
-
-        # Loop through all rows to find the 'Pasaportes' row with the correct text
-        fila_pasaportes = None
-        for fila in tabla.find_all("tr"):
-            columnas = fila.find_all("td")
-            # Ensure we are looking at the correct row because there are multiple with the name Pasaportes
-            if columnas and "Pasaportes" in columnas[0].get_text(strip=True) and "renovación y primera vez" in columnas[0].get_text(strip=True):
-                fila_pasaportes = fila
-                break
-
+        fila_pasaportes = obtener_fila_pasaportes(tabla)
         if not fila_pasaportes:
             raise ValueError("No se encontró la fila del servicio de pasaportes.")
-
-        # Extract the last and next opening dates
         columnas = fila_pasaportes.find_all("td")
         if len(columnas) < 3:
             raise ValueError("La fila de pasaportes no contiene las columnas esperadas.")
-
-        ultima_apertura = columnas[1].get_text(strip=True)
-        proxima_apertura = columnas[2].get_text(strip=True)
-
-        # Print the extracted dates (for debugging)
-        print(f"Última apertura: {ultima_apertura}")
-        print(f"Próxima apertura: {proxima_apertura}")
-
-        return ultima_apertura, proxima_apertura
-
-    except Exception as e:
+        return columnas[1].get_text(strip=True), columnas[2].get_text(strip=True)
+    except requests.RequestException as e:
         print(f"Error al obtener las fechas de pasaportes: {e}")
-        return None, None
+    return None, None
 
-
-
-def leer_datos_anteriores():
+def leer_datos_anteriores(data_file):
     """Lee los datos guardados anteriormente de las fechas y la última notificación."""
     try:
-        with open(DATA_FILE, "r") as archivo:
+        with open(data_file, "r") as archivo:
             datos = json.load(archivo)
-            # Verificar que todas las claves necesarias existan
             if "ultima_apertura" not in datos:
                 datos["ultima_apertura"] = ""
             if "proxima_apertura" not in datos:
@@ -102,66 +67,52 @@ def leer_datos_anteriores():
                 datos["ultima_notificacion"] = ""  # Valor por defecto
             return datos
     except FileNotFoundError:
-        # Si el archivo no existe, devolver datos iniciales vacíos
         return {"ultima_apertura": "", "proxima_apertura": "", "ultima_notificacion": ""}
 
-
-
-def guardar_datos(ultima_apertura, proxima_apertura, ultima_notificacion):
+def guardar_datos(data_file, ultima_apertura, proxima_apertura, ultima_notificacion):
     """Guarda las fechas actuales y la última notificación en un archivo, como un registro."""
-    # Check if the file exists
-    if os.path.exists(DATA_FILE):
-        # Load the existing data if the file exists
-        with open(DATA_FILE, "r") as archivo:
+    if os.path.exists(data_file):
+        with open(data_file, "r") as archivo:
             try:
                 data = json.load(archivo)
             except json.JSONDecodeError:
-                data = []  # If the file is empty or corrupted, start with an empty list
+                data = []
     else:
-        # If the file does not exist, start with an empty list
         data = []
 
-    # Create a new entry with the current data
     nueva_entrada = {
-        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Timestamp for when the data is saved
+        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "ultima_apertura": ultima_apertura,
         "proxima_apertura": proxima_apertura,
         "ultima_notificacion": ultima_notificacion
     }
 
-    # Append the new entry to the data list
     data.append(nueva_entrada)
 
-    # Save the updated data back to the file
-    with open(DATA_FILE, "w") as archivo:
+    with open(data_file, "w") as archivo:
         json.dump(data, archivo, indent=4)
 
-
-def verificar_cambios():
+def verificar_cambios(url, token, chat_id, data_file):
     """Verifica si las fechas de apertura han cambiado y si deben enviarse notificaciones."""
-    ultima_actual, proxima_actual = obtener_fechas_pasaportes()
+    ultima_actual, proxima_actual = obtener_fechas_pasaportes(url)
     if not ultima_actual or not proxima_actual:
-        return  # Si hubo un error, salir
+        return
 
-    datos_anteriores = leer_datos_anteriores()
+    datos_anteriores = leer_datos_anteriores(data_file)
     ultima_anterior = datos_anteriores["ultima_apertura"]
     proxima_anterior = datos_anteriores["proxima_apertura"]
     ultima_notificacion = datos_anteriores["ultima_notificacion"]
 
-    # Verificar si las fechas han cambiado
     if proxima_actual != proxima_anterior:
         mensaje = (
             "¡Cambio detectado en las fechas de apertura de citas para pasaportes!\n"
             f"Última apertura: {ultima_actual}\n"
             f"Próxima apertura: {proxima_actual}"
         )
-        # Enviar un mensaje inmediatamente cuando se detecte un cambio
-        enviar_mensaje_telegram(mensaje)
+        enviar_mensaje_telegram(token, chat_id, mensaje)
         print("Notificación enviada por cambio en las fechas de pasaportes.")
-        # Actualizar los datos
-        guardar_datos(ultima_actual, proxima_actual, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        guardar_datos(data_file, ultima_actual, proxima_actual, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-    # Enviar mensaje diario a las 9:00 AM, independientemente de si hay cambios
     current_time = datetime.now()
     if current_time.hour == 9:
         if proxima_actual != proxima_anterior:
@@ -170,7 +121,7 @@ def verificar_cambios():
                 f"Última apertura: {ultima_actual}\n"
                 f"Próxima apertura: {proxima_actual}"
             )
-            enviar_mensaje_telegram(mensaje_diario)
+            enviar_mensaje_telegram(token, chat_id, mensaje_diario)
             print("Notificación diaria enviada por cambio en las fechas de pasaportes.")
         else:
             mensaje_diario = (
@@ -178,16 +129,21 @@ def verificar_cambios():
                 f"Última apertura: {ultima_actual}\n"
                 f"Próxima apertura: {proxima_actual}"
             )
-            enviar_mensaje_telegram(mensaje_diario)
+            enviar_mensaje_telegram(token, chat_id, mensaje_diario)
             print("No hay cambios detectados en las fechas de pasaportes (notificación diaria).")
 
-        # Actualizar la última notificación
-        guardar_datos(ultima_actual, proxima_actual, current_time.strftime("%Y-%m-%d %H:%M:%S"))
+        guardar_datos(data_file, ultima_actual, proxima_actual, current_time.strftime("%Y-%m-%d %H:%M:%S"))
 
-
-# Ejecución continua del programa
 if __name__ == "__main__":
+    config = cargar_configuracion(CONFIG_FILE)
+    if config is None:
+        raise Exception("No se pudo cargar la configuración. Abortando ejecución.")
+
+    URL = config["URL"]
+    TELEGRAM_TOKEN = config["TELEGRAM_TOKEN"]
+    CHAT_ID = config["CHAT_ID"]
+
     while True:
-        verificar_cambios()  # Verificar cambios en las fechas
+        verificar_cambios(URL, TELEGRAM_TOKEN, CHAT_ID, DATA_FILE)
         print("Esperando 30 minutos para la siguiente verificación...")
         time.sleep(1800)  # Pausa de 30 minutos (1800 segundos)
